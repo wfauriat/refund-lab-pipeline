@@ -1,0 +1,151 @@
+{
+  "data": [
+    {
+      "order_id": "ORD-00000006",
+      "customer_id": "0000530",
+      "occurred_at": "2026-01-02T07:07:54",
+      "channel": "web",
+      "payment_method": "card",
+      "shipping_speed": "standard",
+      "order_total_cents": 7569,
+      "items": [
+        {
+          "sku": "APP-9193",
+          "category": "apparel",
+          "qty": 3,
+          "unit_price_cents": 1740
+        },
+        {
+          "sku": "BEA-2497",
+          "category": "beauty",
+          "qty": 1,
+          "unit_price_cents": 2349
+        }
+      ],
+      "version": 1,
+      "knowledge_time": "2026-01-02T07:09:45"
+    },
+    {
+      "order_id": "ORD-00000007",
+      "customer_id": "0003447",
+      "occurred_at": "2026-01-02T07:16:09",
+      "channel": "mobile",
+      "payment_method": "card",
+      "shipping_speed": "express",
+      "order_total_cents": 22407,
+      "items": [
+        {
+          "sku": "BEA-6079",
+          "category": "beauty",
+          "qty": 1,
+          "unit_price_cents": 4924
+        },
+        {
+          "sku": "ELE-5635",
+          "category": "electronics",
+          "qty": 2,
+          "unit_price_cents": 2104
+        },
+        {
+          "sku": "APP-4804",
+          "category": "apparel",
+          "qty": 2,
+          "unit_price_cents": 3279
+        },
+        {
+          "sku": "ELE-9364",
+          "category": "electronics",
+          "qty": 3,
+          "unit_price_cents": 2239
+        }
+      ],
+      "version": 1,
+      "knowledge_time": "2026-01-02T07:26:04"
+    },
+    {
+      "order_id": "ORD-00000008",
+      "customer_id": "0000850",
+      "occurred_at": "2026-01-02T07:44:16",
+      "channel": "web",
+      "payment_method": "wallet",
+      "shipping_speed": "standard",
+      "order_total_cents": 3604,
+      "items": [
+        {
+          "sku": "OUT-5387",
+          "category": "outdoor",
+          "qty": 2,
+          "unit_price_cents": 1802
+        }
+      ],
+      "version": 1,
+      "knowledge_time": "2026-01-02T07:52:08"
+    },
+    {
+      "order_id": "ORD-00000009",
+      "customer_id": "0004737",
+      "occurred_at": "2026-01-02T10:02:08",
+      "channel": "partner_api",
+      "payment_method": "card",
+      "shipping_speed": "standard",
+      "order_total_cents": 53427,
+      "items": [
+        {
+          "sku": "BEA-8836",
+          "category": "beauty",
+          "qty": 3,
+          "unit_price_cents": 15844
+        },
+        {
+          "sku": "HOM-6544",
+          "category": "home",
+          "qty": 1,
+          "unit_price_cents": 5895
+        }
+      ],
+      "version": 1,
+      "knowledge_time": "2026-01-02T12:01:56"
+    },
+    {
+      "order_id": "ORD-00000010",
+      "customer_id": "0005112",
+      "occurred_at": "2026-01-02T10:40:50",
+      "channel": "web",
+      "payment_method": "card",
+      "shipping_speed": "express",
+      "order_total_cents": 63410,
+      "items": [
+        {
+          "sku": "APP-2806",
+          "category": "apparel",
+          "qty": 3,
+          "unit_price_cents": 6288
+        },
+        {
+          "sku": "APP-2991",
+          "category": "apparel",
+          "qty": 2,
+          "unit_price_cents": 4327
+        },
+        {
+          "sku": "APP-7511",
+          "category": "apparel",
+          "qty": 3,
+          "unit_price_cents": 9637
+        },
+        {
+          "sku": "APP-7201",
+          "category": "apparel",
+          "qty": 3,
+          "unit_price_cents": 2327
+        }
+      ],
+      "version": 1,
+      "knowledge_time": "2026-01-02T10:48:35"
+    }
+  ],
+  "as_of": "2026-01-05T22:29:09",
+  "cursor": "eyJhIjoiMjAyNi0wMS0wNVQyMjoyOTowOSIsIm4iOjg1LCJyIjo1LCJ0Ijoib3JkZXJzIiwidiI6IjIwMjYtMDEtMDJUMDU6Mzc6MDIifQ",
+  "next_cursor": "eyJhIjoiMjAyNi0wMS0wNVQyMjoyOTowOSIsIm4iOjg1LCJwciI6NSwicHYiOiIyMDI2LTAxLTAyVDA1OjM3OjAyIiwiciI6MTAsInQiOiJvcmRlcnMiLCJ2IjoiMjAyNi0wMS0wMlQxMDo0MDo1MCJ9",
+  "total_count": 85
+}

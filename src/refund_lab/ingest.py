@@ -2,11 +2,11 @@ import httpx
 import time
 import json
 
+
 PORT = "8088"
 API_URL = "http://127.0.0.1:" + PORT
 
 DEV_TOKEN = "rl_live_8f2c1d94e6b74a03"
-
 
 def auth_to_API(client: httpx.Client):
     resp = client.post(API_URL + "/v1/auth/token",
@@ -14,7 +14,9 @@ def auth_to_API(client: httpx.Client):
     live_token = resp.json()["access_token"]
     client.headers["Authorization"] = f"Bearer {live_token}"
 
-client = httpx.Client(base_url=API_URL, timeout=10)
+client = httpx.Client(base_url=API_URL, timeout=10,
+                      mounts={"all://localhost": None,
+                              "all://127.0.0.1": None})
 auth_to_API(client)
 
 cursor = None

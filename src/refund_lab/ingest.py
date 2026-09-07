@@ -3,18 +3,19 @@ import time
 import json
 import itertools
 import sqlite3
+import datetime
+
 
 
 PORT = "8088"
 API_URL = "http://127.0.0.1:" + PORT
 DEV_TOKEN = "rl_live_8f2c1d94e6b74a03"
 
-
 SCHEMA_LEDGER = """
-CREATE TABLE page_ledger (
+CREATE TABLE IF NOT EXISTS page_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity TEXT,
-    cursor TEXT NOT NULL,
+    cursor TEXT,
     next_cursor TEXT,
     page_num INT NOT NULL,
     fetched_at TEXT,
@@ -23,7 +24,7 @@ CREATE TABLE page_ledger (
 );
 """
 SCHEMA_ORDERS_RAW = """
-CREATE TABLE orders_raw (
+CREATE TABLE IF NOT EXISTS orders_raw (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content_hash TEXT,
     order_id TEXT NOT NULL,
@@ -40,8 +41,27 @@ CREATE TABLE orders_raw (
     source_cursor TEXT,
     source_page TEXT,
     UNIQUE (order_id, version, content_hash)
-)
+);
 """
+
+conn = sqlite3.connect("landing.db")
+conn.execute("PRAGMA journal_mode=WAL")
+conn.executescript(SCHEMA_LEDGER)
+conn.executescript(SCHEMA_ORDERS_RAW)
+conn.commit()
+
+def complete_page(resp: httpx.Response, cursor: str | None,
+                  page: int,
+                  conn: sqlite3.Connection):
+    conn.execute("""
+    INSERT INTO page_ledger (entity, cursor, next_cursor,
+                            page_num, fetched_at, payload_hash,
+                            status) VALUES (?,?,?,?,?,?,?);
+    """,
+    ("orders", cursor, resp.json()["next_cursor"], page, 
+       datetime.datetime.now().isoformat(),
+         "hash1123", "succeeded"))
+    conn.commit()
 
 
 def auth_to_API(client: httpx.Client):
@@ -99,7 +119,7 @@ client = httpx.Client(base_url=API_URL, timeout=10,
                       mounts={"all://localhost": None,
                               "all://127.0.0.1": None})
 auth_to_API(client)
-client.headers["Authorization"] = ""
+# client.headers["Authorization"] = ""
 
 cursor = None
 page = 1
@@ -112,6 +132,7 @@ while True:
     while tries < 5:
         try:
             resp = fetch_page(client, cursor)
+            complete_page(resp, cursor, page, conn)
             break
         except RetryableAuth:
             auth_to_API(client)

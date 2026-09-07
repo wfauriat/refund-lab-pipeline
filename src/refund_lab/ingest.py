@@ -2,11 +2,47 @@ import httpx
 import time
 import json
 import itertools
+import sqlite3
 
 
 PORT = "8088"
 API_URL = "http://127.0.0.1:" + PORT
 DEV_TOKEN = "rl_live_8f2c1d94e6b74a03"
+
+
+SCHEMA_LEDGER = """
+CREATE TABLE page_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity TEXT,
+    cursor TEXT NOT NULL,
+    next_cursor TEXT,
+    page_num INT NOT NULL,
+    fetched_at TEXT,
+    payload_hash TEXT,
+    status TEXT
+);
+"""
+SCHEMA_ORDERS_RAW = """
+CREATE TABLE orders_raw (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT,
+    order_id TEXT NOT NULL,
+    customer_id TEXT,
+    occurred_at TEXT,
+    channel TEXT,
+    payment_method TEXT,
+    shipping_speed TEXT,
+    order_total_cents INT,
+    items TEXT,
+    version TEXT,
+    knowledge_time TEXT,
+    received_at TEXT,
+    source_cursor TEXT,
+    source_page TEXT,
+    UNIQUE (order_id, version, content_hash)
+)
+"""
+
 
 def auth_to_API(client: httpx.Client):
     resp = client.post(API_URL + "/v1/auth/token",
@@ -65,6 +101,42 @@ client = httpx.Client(base_url=API_URL, timeout=10,
 auth_to_API(client)
 client.headers["Authorization"] = ""
 
+cursor = None
+page = 1
+max_retries = 5
+tries = 0
+orders = []
+entry = []
+
+while True:
+    while tries < 5:
+        try:
+            resp = fetch_page(client, cursor)
+            break
+        except RetryableAuth:
+            auth_to_API(client)
+        except RetryableBackoff as e:
+            tic = time.time()
+            time.sleep(compute_backoff(tries, retry_after=e.retry_after))
+        except NonRetryable as e:
+            raise NonRetryable(f"page failed at cursor {cursor}") from e
+        tries+=1
+    else:
+        raise RuntimeError(f"exhausted retries on page {page}")
+    orders.extend(resp.json()["data"])
+    cursor = resp.json()["next_cursor"]
+    tries = 0
+    page += 1
+    if cursor is None:
+        break
+
+
+
+# with open("orders_sample.jsonl", "w") as f:
+#     for order in orders:
+#         f.write(json.dumps(order) + "\n")
+
+
 
 # def make_flaky_fetch_page(real_fetch_page, fail_pattern):
 #     """
@@ -94,38 +166,3 @@ client.headers["Authorization"] = ""
 #         None,
 #     ]
 # )
-
-cursor = None
-page = 1
-max_retries = 5
-tries = 0
-orders = []
-
-while True:
-    while tries < 5:
-        try:
-            resp = fetch_page(client, cursor)
-            break
-        except RetryableAuth:
-            auth_to_API(client)
-            print("retry")
-        except RetryableBackoff as e:
-            tic = time.time()
-            time.sleep(compute_backoff(tries, retry_after=e.retry_after))
-            print(time.time()-tic)
-            print("backoff")
-        except NonRetryable as e:
-            raise NonRetryable(f"page failed at cursor {cursor}") from e
-        tries+=1
-    else:
-        raise RuntimeError(f"exhausted retries on page {page}")
-    orders.extend(resp.json()["data"])
-    cursor = resp.json()["next_cursor"]
-    tries = 0
-    page += 1
-    if cursor is None:
-        break
-
-with open("orders_sample.jsonl", "w") as f:
-    for order in orders:
-        f.write(json.dumps(order) + "\n")

@@ -4,45 +4,48 @@ import json
 import itertools
 import sqlite3
 import datetime
-
+import hashlib
 
 
 PORT = "8088"
 API_URL = "http://127.0.0.1:" + PORT
 DEV_TOKEN = "rl_live_8f2c1d94e6b74a03"
 
-SCHEMA_LEDGER = """
-CREATE TABLE IF NOT EXISTS page_ledger (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity TEXT,
-    cursor TEXT,
-    next_cursor TEXT,
-    page_num INT NOT NULL,
-    fetched_at TEXT,
-    payload_hash TEXT,
-    status TEXT
-);
-"""
-SCHEMA_ORDERS_RAW = """
-CREATE TABLE IF NOT EXISTS orders_raw (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    content_hash TEXT,
-    order_id TEXT NOT NULL,
-    customer_id TEXT,
-    occurred_at TEXT,
-    channel TEXT,
-    payment_method TEXT,
-    shipping_speed TEXT,
-    order_total_cents INT,
-    items TEXT,
-    version TEXT,
-    knowledge_time TEXT,
-    received_at TEXT,
-    source_cursor TEXT,
-    source_page TEXT,
-    UNIQUE (order_id, version, content_hash)
-);
-"""
+def content_hash(obj: dict) -> str:
+    canonical = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+LEDGER = (("id", "INTEGER PRIMARY KEY AUTOINCREMENT"), ("entity", "TEXT"),
+          ("page_num", "INT NOT NULL"), ("fetched_at", "TEXT"),
+          ("payload_hash", "TEXT"), ("status", "TEXT"),
+          ("as_of_demand", "TEXT"), ("as_of_received", "TEXT"), ("since", "TEXT"),
+          ("until", "TEXT"), ("cursor", "TEXT"),
+          ("next_cursor", "TEXT")  )
+
+SCHEMA_LEDGER = "CREATE TABLE IF NOT EXISTS page_ledger (\n  " + \
+    ",\n  ".join(f"{name} {decl}" for name, decl in LEDGER) + \
+    "\n);"
+
+LEDGER_COLS = tuple(name for name, _ in LEDGER)
+
+
+ORDERS_RAW = (("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+                ("order_id", "TEXT NOT NULL"),
+                ("customer_id", "TEXT"), ("occurred_at", "TEXT"),
+                ("channel", "TEXT"), ("payment_method", "TEXT"),
+                ("shipping_speed", "TEXT"), ("order_total_cents", "INT"),
+                ("items", "TEXT"), ("version", "TEXT"),
+                ("knowledge_time", "TEXT"), ("content_hash", "TEXT"),
+                ("received_at", "TEXT"), ("source_cursor", "TEXT"),
+                ("source_page", "TEXT"))
+
+SCHEMA_ORDERS_RAW = "CREATE TABLE IF NOT EXISTS orders_raw (\n  " + \
+    ",\n  ".join(f"{name} {decl}" for name, decl in ORDERS_RAW) + \
+    ",\n " + "UNIQUE (order_id, version, content_hash));"
+
+ORDERS_COLS = tuple(name for name, _ in ORDERS_RAW)
+
 
 conn = sqlite3.connect("landing.db")
 conn.execute("PRAGMA journal_mode=WAL")
@@ -50,17 +53,44 @@ conn.executescript(SCHEMA_LEDGER)
 conn.executescript(SCHEMA_ORDERS_RAW)
 conn.commit()
 
-def complete_page(resp: httpx.Response, cursor: str | None,
-                  page: int,
-                  conn: sqlite3.Connection):
-    conn.execute("""
-    INSERT INTO page_ledger (entity, cursor, next_cursor,
-                            page_num, fetched_at, payload_hash,
-                            status) VALUES (?,?,?,?,?,?,?);
-    """,
-    ("orders", cursor, resp.json()["next_cursor"], page, 
-       datetime.datetime.now().isoformat(),
-         "hash1123", "succeeded"))
+
+def complete_page(resp: httpx.Response, cursor: str | None, page: int,
+                  conn: sqlite3.Connection,
+                  as_of_demand: str | None,
+                  since: str | None = None,
+                  until: str | None = None):
+    payload = resp.json()
+    conn.execute((f"INSERT INTO page_ledger ({', '.join(LEDGER_COLS[1:])}) "
+                  f"VALUES ({', '.join('?' for _ in LEDGER_COLS[1:])});"),
+            ("orders", page, datetime.datetime.now().isoformat(), "hasttemp",
+            "succeeded", as_of_demand, payload["as_of"], since , until,
+            cursor, payload["next_cursor"]))
+    conn.commit()
+
+def write_entry(entry: dict, conn: sqlite3.Connection,
+                datepage, cursor, page):
+    values = {
+        "order_id": entry["order_id"],
+        "customer_id": entry["customer_id"],
+        "occurred_at": entry["occurred_at"],
+        "channel": entry["channel"],
+        "payment_method": entry["payment_method"],
+        "shipping_speed": entry["shipping_speed"],
+        "order_total_cents": entry["order_total_cents"],
+        "items": json.dumps(entry["items"]),
+        "version": entry["version"],
+        "knowledge_time": entry["knowledge_time"],
+        "content_hash": content_hash(
+            {el: entry[el] for el in ORDERS_COLS if el in entry 
+             and el != "knowledge_time"} | {
+            "items": json.dumps(entry["items"])}),
+        "received_at" : datepage,
+        "source_cursor": cursor,
+        "source_page": page
+    }
+    conn.execute((f"INSERT INTO orders_raw ({', '.join(ORDERS_COLS[1:])}) "
+                  f"VALUES ({', '.join('?' for _ in ORDERS_COLS[1:])});"),
+            tuple(values[col] for col in ORDERS_COLS[1:]))
     conn.commit()
 
 
@@ -109,9 +139,17 @@ def compute_backoff(tries: int, retry_after: float | None = None,
     jitter = random.uniform(0, delay * 0.1) 
     return delay + jitter
 
-def fetch_page(client, cursor):
-    resp = client.get("v1/orders", params={
-            "limit":5, **({"cursor": cursor} if cursor else {})})
+def fetch_page(client: httpx.Client,
+               cursor: str | None,
+               as_of: str | None = None,
+               since: str | None = None,
+               until: str | None = None):
+    resp = client.get("v1/orders", 
+                params={"limit":5,
+                        **({"cursor": cursor} if cursor else {}),
+                        **({"as_of": as_of} if as_of else {}),
+                        **({"since": since} if since else {}),
+                        **({"until": until} if until else {})})
     classify_response(resp)
     return resp
 
@@ -122,6 +160,10 @@ auth_to_API(client)
 # client.headers["Authorization"] = ""
 
 cursor = None
+as_of = "2027-01-31T00:00:00"
+# as_of = None
+since = "2026-01-15T00:00:00"
+until = "2026-01-25T00:00:00"
 page = 1
 max_retries = 5
 tries = 0
@@ -131,8 +173,11 @@ entry = []
 while True:
     while tries < 5:
         try:
-            resp = fetch_page(client, cursor)
-            complete_page(resp, cursor, page, conn)
+            resp = fetch_page(client, cursor, as_of, since, until)
+            complete_page(resp, cursor, page, conn, as_of, since, until)
+            datepage = datetime.datetime.now().isoformat()
+            for el in resp.json()["data"]: 
+                write_entry(el, conn, datepage, cursor, page)
             break
         except RetryableAuth:
             auth_to_API(client)
@@ -147,6 +192,8 @@ while True:
     orders.extend(resp.json()["data"])
     cursor = resp.json()["next_cursor"]
     tries = 0
+    if page == 1:
+        as_of = resp.json()["as_of"]
     page += 1
     if cursor is None:
         break

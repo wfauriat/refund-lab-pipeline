@@ -49,6 +49,8 @@ ORDERS_COLS = tuple(name for name, _ in ORDERS_RAW)
 
 conn = sqlite3.connect("landing.db")
 conn.execute("PRAGMA journal_mode=WAL")
+# conn.execute("DROP TABLE IF EXISTS page_ledger") # Temp for dev rerun
+conn.execute("DROP TABLE IF EXISTS orders_raw") # Temp for dev rerun
 conn.executescript(SCHEMA_LEDGER)
 conn.executescript(SCHEMA_ORDERS_RAW)
 conn.commit()
@@ -92,6 +94,22 @@ def write_entry(entry: dict, conn: sqlite3.Connection,
                   f"VALUES ({', '.join('?' for _ in ORDERS_COLS[1:])});"),
             tuple(values[col] for col in ORDERS_COLS[1:]))
     conn.commit()
+
+## NOT DONE YET
+def find_resume_point(conn, entity, since, until):
+    row = conn.execute("""
+        SELECT page_num, cursor, next_cursor, as_of_received
+        FROM page_ledger
+        WHERE entity = ? AND since = ? AND until = ?
+        ORDER BY as_of_received DESC, page_num DESC
+        LIMIT 1;
+    """, (entity, since, until)).fetchone()
+    if row is None:
+        return (False, None, 0, None)
+    if row["next_cursor"] == None:
+        return (True, None, row["page_num"], row["as_of_received"])
+    else:
+        return (False, row["next_cursor"], row["page_num"], row["as_of_received"])
 
 
 def auth_to_API(client: httpx.Client):
@@ -161,7 +179,6 @@ auth_to_API(client)
 
 cursor = None
 as_of = "2027-01-31T00:00:00"
-# as_of = None
 since = "2026-01-15T00:00:00"
 until = "2026-01-25T00:00:00"
 page = 1
@@ -170,6 +187,12 @@ tries = 0
 orders = []
 entry = []
 
+this_pull = {
+    "entity": "orders",
+    "since": since,
+    "until": until,
+    "as_of": as_of,
+}
 while True:
     while tries < 5:
         try:
@@ -191,13 +214,14 @@ while True:
         raise RuntimeError(f"exhausted retries on page {page}")
     orders.extend(resp.json()["data"])
     cursor = resp.json()["next_cursor"]
-    tries = 0
     if page == 1:
         as_of = resp.json()["as_of"]
+        this_pull["as_of"] = as_of
+    tries = 0
     page += 1
     if cursor is None:
         break
-
+print(this_pull)
 
 
 # with open("orders_sample.jsonl", "w") as f:

@@ -47,24 +47,16 @@ SCHEMA_ORDERS_RAW = "CREATE TABLE IF NOT EXISTS orders_raw (\n  " + \
 ORDERS_COLS = tuple(name for name, _ in ORDERS_RAW)
 
 
-conn = sqlite3.connect("landing.db")
-conn.execute("PRAGMA journal_mode=WAL")
-# conn.execute("DROP TABLE IF EXISTS page_ledger") # Temp for dev rerun
-conn.execute("DROP TABLE IF EXISTS orders_raw") # Temp for dev rerun
-conn.executescript(SCHEMA_LEDGER)
-conn.executescript(SCHEMA_ORDERS_RAW)
-conn.commit()
-
 
 def complete_page(resp: httpx.Response, cursor: str | None, page: int,
-                  conn: sqlite3.Connection,
+                  conn: sqlite3.Connection, entity: str,
                   as_of_demand: str | None,
                   since: str | None = None,
                   until: str | None = None):
     payload = resp.json()
     conn.execute((f"INSERT INTO page_ledger ({', '.join(LEDGER_COLS[1:])}) "
                   f"VALUES ({', '.join('?' for _ in LEDGER_COLS[1:])});"),
-            ("orders", page, datetime.datetime.now().isoformat(), "hasttemp",
+            (entity, page, datetime.datetime.now().isoformat(), "hasttemp",
             "succeeded", as_of_demand, payload["as_of"], since , until,
             cursor, payload["next_cursor"]))
     conn.commit()
@@ -171,57 +163,81 @@ def fetch_page(client: httpx.Client,
     classify_response(resp)
     return resp
 
-client = httpx.Client(base_url=API_URL, timeout=10,
-                      mounts={"all://localhost": None,
-                              "all://127.0.0.1": None})
-auth_to_API(client)
-# client.headers["Authorization"] = ""
 
-cursor = None
-as_of = "2027-01-31T00:00:00"
-since = "2026-01-15T00:00:00"
-until = "2026-01-25T00:00:00"
-page = 1
-max_retries = 5
-tries = 0
-orders = []
-entry = []
 
-this_pull = {
-    "entity": "orders",
-    "since": since,
-    "until": until,
-    "as_of": as_of,
-}
-while True:
-    while tries < 5:
-        try:
-            resp = fetch_page(client, cursor, as_of, since, until)
-            complete_page(resp, cursor, page, conn, as_of, since, until)
-            datepage = datetime.datetime.now().isoformat()
-            for el in resp.json()["data"]: 
-                write_entry(el, conn, datepage, cursor, page)
-            break
-        except RetryableAuth:
-            auth_to_API(client)
-        except RetryableBackoff as e:
-            tic = time.time()
-            time.sleep(compute_backoff(tries, retry_after=e.retry_after))
-        except NonRetryable as e:
-            raise NonRetryable(f"page failed at cursor {cursor}") from e
-        tries+=1
-    else:
-        raise RuntimeError(f"exhausted retries on page {page}")
-    orders.extend(resp.json()["data"])
-    cursor = resp.json()["next_cursor"]
-    if page == 1:
-        as_of = resp.json()["as_of"]
-        this_pull["as_of"] = as_of
+def run_pull(entity: str, since: str, until: str, as_of: str,
+             conn: sqlite3.Connection, client: httpx.Client) -> dict:
+    page = 1
+    max_retries = 5
     tries = 0
-    page += 1
-    if cursor is None:
-        break
-print(this_pull)
+    orders = []
+    cursor = None
+    this_pull = {
+        "entity": entity,
+        "since": since,
+        "until": until,
+        "as_of": as_of,
+        "orders": []
+    }
+    while True:
+        while tries < max_retries:
+            try:
+                resp = fetch_page(client, cursor, as_of, since, until)
+                complete_page(resp, cursor, page, conn, entity,
+                               as_of, since, until)
+                datepage = datetime.datetime.now().isoformat()
+                for el in resp.json()["data"]: 
+                    write_entry(el, conn, datepage, cursor, page)
+                break
+            except RetryableAuth:
+                auth_to_API(client)
+            except RetryableBackoff as e:
+                tic = time.time()
+                time.sleep(compute_backoff(tries, retry_after=e.retry_after))
+            except NonRetryable as e:
+                raise NonRetryable(f"page failed at cursor {cursor}") from e
+            tries+=1
+        else:
+            raise RuntimeError(f"exhausted retries on page {page}")
+        orders.extend(resp.json()["data"])
+        cursor = resp.json()["next_cursor"]
+        if page == 1:
+            as_of = resp.json()["as_of"]
+            this_pull["as_of"] = as_of
+        tries = 0
+        page += 1
+        if cursor is None:
+            break
+    this_pull["orders"] = orders
+    return this_pull
+
+
+if __name__ == "__main__":
+
+    conn = sqlite3.connect("landing.db")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("DROP TABLE IF EXISTS page_ledger") # Temp for dev rerun
+    conn.execute("DROP TABLE IF EXISTS orders_raw") # Temp for dev rerun
+    conn.executescript(SCHEMA_LEDGER)
+    conn.executescript(SCHEMA_ORDERS_RAW)
+    conn.commit()
+
+    client = httpx.Client(base_url=API_URL, timeout=10,
+                        mounts={"all://localhost": None,
+                                "all://127.0.0.1": None})
+    auth_to_API(client)
+    # client.headers["Authorization"] = ""
+
+    entity = "orders"
+    as_of = "2027-01-31T00:00:00"
+    since = "2026-01-15T00:00:00"
+    until = "2026-01-25T00:00:00"
+    pulled = run_pull(entity, since, until, as_of,
+             conn, client)
+    print(pulled["orders"][0])
+
+
+
 
 
 # with open("orders_sample.jsonl", "w") as f:

@@ -42,8 +42,6 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
                 (claimed_prev["prev_last_seen_value"] == \
                 this_position["last_seen_value"]):
                 break
-            else:
-                attempt += 1
         else:
             raise UncompletePull(f"Could not complete pull at page {page} "
                         f"from cursor {json.dumps(decode_cursor(cursor))}")

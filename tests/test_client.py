@@ -7,6 +7,7 @@ import json
 from refund_lab.client import (fetch_page_with_retry, decode_cursor,
                                 classify_response)
 from refund_lab.client import RetryableAuth, RetryableBackoff
+from refund_lab.ingest import run_pull, UncompletePull, CHAIN_RETRY_LIMIT
 
 def test_fetch_page_with_retry_recovers_from_429(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda seconds: None)
@@ -50,3 +51,67 @@ def test_classify_response_raises_on_429():
     with pytest.raises(RetryableBackoff) as exc_info: 
         classify_response(resp)
     assert exc_info.value.retry_after == 0.1
+
+def test_run_pull_recovers_from_one_bad_chain_link(monkeypatch):
+    data = [{"order_id":"", "customer_id":"",
+            "occurred_at":"", "channel":"",
+            "payment_method":"", "shipping_speed":"",
+            "order_total_cents":1, "items":[],
+            "version":1, "knowledge_time":"2026-01-02T00:00:00"}]
+    cu1 = {"v": "2026-01-02T00:00:00", "r":20 ,
+           "pr": 10, "pv": "2026-01-01T00:00:00",
+            "t": "orders", "n":10}
+    cu1_str= base64.b64encode(json.dumps(cu1).encode()).decode()
+    payload1 = {"cursor": None, "next_cursor":cu1_str, "data":data,
+                "as_of":""}
+    cu2 = {"v": "2026-01-02T00:00:00", "r":20 ,
+           "pr": 30, "pv": "2026-01-03T00:00:00",
+            "t": "orders", "n":10}
+    cu2_str= base64.b64encode(json.dumps(cu2).encode()).decode()
+    payload2 = {"cursor": cu1_str, "next_cursor":cu2_str, "data":data,
+                "as_of":""}
+    cu3 = {"v": "2026-01-02T00:00:00", "r":30 ,
+           "pr": 20, "pv": "2026-01-02T00:00:00",
+            "t": "orders", "n":10}
+    cu3_str= base64.b64encode(json.dumps(cu3).encode()).decode()
+    payload3 = {"cursor": cu3_str, "next_cursor":None, "data":data,
+                "as_of":""}
+    mock_fetch = Mock(side_effect=[payload1, payload2, payload3])
+    monkeypatch.setattr(
+        "refund_lab.ingest.fetch_page_with_retry", mock_fetch)
+    conn = Mock()
+    client = Mock()
+    this_pull = run_pull("orders","", "", "",
+                          conn, client)
+    assert mock_fetch.call_count == 3
+    assert len(this_pull["orders"]) == 2
+
+
+
+def test_run_pull_raises_on_retry_exhaustion(monkeypatch):
+    data = [{"order_id":"", "customer_id":"",
+            "occurred_at":"", "channel":"",
+            "payment_method":"", "shipping_speed":"",
+            "order_total_cents":1, "items":[],
+            "version":1, "knowledge_time":"2026-01-02T00:00:00"}]
+    cu1 = {"v": "2026-01-02T00:00:00", "r":20 ,
+           "pr": 10, "pv": "2026-01-01T00:00:00",
+            "t": "orders", "n":10}
+    cu1_str= base64.b64encode(json.dumps(cu1).encode()).decode()
+    payload1 = {"cursor": None, "next_cursor":cu1_str, "data":data,
+                "as_of":""}
+    cu2 = {"v": "2026-01-02T00:00:00", "r":20 ,
+           "pr": 30, "pv": "2026-01-03T00:00:00",
+            "t": "orders", "n":10}
+    cu2_str= base64.b64encode(json.dumps(cu2).encode()).decode()
+    payload2 = {"cursor": cu1_str, "next_cursor":cu2_str, "data":data,
+                "as_of":""}
+    mock_fetch = Mock(side_effect=[payload1] + \
+                                   [payload2]*CHAIN_RETRY_LIMIT)
+    monkeypatch.setattr(
+        "refund_lab.ingest.fetch_page_with_retry", mock_fetch)
+    conn = Mock()
+    client = Mock()
+    with pytest.raises(UncompletePull):
+        run_pull("orders","", "", "", conn, client)
+    assert mock_fetch.call_count == CHAIN_RETRY_LIMIT + 1

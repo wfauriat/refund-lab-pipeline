@@ -12,6 +12,6 @@ sqlite3 "$DB" -header -column \
 section "Last records in orders_raw"
 sqlite3 "$DB" -header -column \
 "SELECT id, order_id, customer_id, knowledge_time
-FROM orders_raw ORDER BY id ASC
+FROM orders_raw ORDER BY id DESC
 LIMIT 4;"
 

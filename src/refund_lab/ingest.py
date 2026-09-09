@@ -1,12 +1,19 @@
 import httpx
 import sqlite3
 import datetime
+import json
 
 
 from .config import API_URL
-from .client import auth_to_API, fetch_page_with_retry
+from .client import auth_to_API, fetch_page_with_retry, decode_cursor
 from .db import init_db, complete_page, write_entry
 
+CHAIN_RETRY_LIMIT = 3
+
+class UncompletePull(Exception):
+    """ Pull could not complete all the way through
+    """
+    pass
 
 def run_pull(entity: str, since: str, until: str, as_of: str,
              conn: sqlite3.Connection, client: httpx.Client) -> dict:
@@ -21,14 +28,32 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
         "orders": []
     }
     while True:
-        payload = fetch_page_with_retry(client, entity, cursor,
-                                         as_of, since, until)
+        for attempt in range(CHAIN_RETRY_LIMIT):
+            payload = fetch_page_with_retry(client, entity, cursor,
+                                    as_of, since, until)
+            if cursor is None or payload["next_cursor"] is None:
+                break
+            this_position = decode_cursor(payload["cursor"])
+            assert this_position is not None
+            claimed_prev = decode_cursor(payload["next_cursor"])
+            assert claimed_prev is not None
+            if (claimed_prev["prev_rows_served"] == \
+                this_position["rows_served"]) & \
+                (claimed_prev["prev_last_seen_value"] == \
+                this_position["last_seen_value"]):
+                break
+            else:
+                attempt += 1
+        else:
+            raise UncompletePull(f"Could not complete pull at page {page} "
+                        f"from cursor {json.dumps(decode_cursor(cursor))}")
+        data = payload["data"]
+        timestamp = datetime.datetime.now().isoformat()
+        for row in data: 
+            write_entry(row, conn, timestamp, cursor, page)
         complete_page(conn, payload, entity,
-                      cursor, page, as_of, since, until)
-        orders.extend(payload["data"])
-        datepage = datetime.datetime.now().isoformat()
-        for el in payload["data"]: 
-            write_entry(el, conn, datepage, cursor, page)
+                        cursor, page, as_of, since, until)
+        orders.extend(payload["data"])            
         cursor = payload["next_cursor"]
         if page == 1:
             as_of = payload["as_of"]
@@ -55,7 +80,6 @@ if __name__ == "__main__":
     until = "2026-01-25T00:00:00"
     pulled = run_pull(entity, since, until, as_of,
              conn, client)
-    breakpoint()
     print(pulled["orders"][0])
 
 

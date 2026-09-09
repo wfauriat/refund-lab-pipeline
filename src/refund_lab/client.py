@@ -1,9 +1,10 @@
 
 import httpx
 import time
+import json
 
 from .config import API_URL, DEV_TOKEN
-from .utils import compute_backoff
+from .utils import compute_backoff, b64decode_relaxed
 
 class NonRetryable(Exception):
     """Raised for a response we should not retry (4xx other than 401,
@@ -68,3 +69,20 @@ def fetch_page_with_retry(client: httpx.Client, entity: str,
             tries+=1
     else:
         raise RuntimeError(f"exhausted retries")
+
+def decode_cursor(cursor: str | None) -> dict | None:
+    if cursor is None:
+        return None
+    decoded = json.loads(b64decode_relaxed(cursor))
+    dict_cursor = {
+        "entity": decoded["t"],
+        "as_of": decoded.get("a"),
+        "total_count": decoded["n"],
+        "rows_served": decoded["r"],
+        "since": decoded.get("s"),
+        "until": decoded.get("u"),
+        "last_seen_value": decoded["v"],
+        "prev_rows_served": decoded.get("pr"),
+        "prev_last_seen_value": decoded.get("pv")
+    }
+    return dict_cursor

@@ -1,6 +1,7 @@
 import json
 import hashlib
 import random
+import base64
 
 
 def content_hash(obj: dict) -> str:
@@ -14,3 +15,8 @@ def compute_backoff(tries: int, retry_after: float | None = None,
     delay = min(base * (2 ** tries), max_delay)
     jitter = random.uniform(0, delay * 0.1) 
     return delay + jitter
+
+def b64decode_relaxed(s):
+    s = s.strip()
+    s += "=" * (-len(s) % 4)
+    return base64.b64decode(s)

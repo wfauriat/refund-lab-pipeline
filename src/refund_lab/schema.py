@@ -7,7 +7,7 @@ LEDGER = (("id", "INTEGER PRIMARY KEY AUTOINCREMENT"), ("entity", "TEXT"),
 
 SCHEMA_LEDGER = "CREATE TABLE IF NOT EXISTS page_ledger (\n  " + \
     ",\n  ".join(f"{name} {decl}" for name, decl in LEDGER) + \
-    "\n);"
+    ",\n " + "UNIQUE (entity, since, until, as_of_received, page_num));"
 
 LEDGER_COLS = tuple(name for name, _ in LEDGER)
 

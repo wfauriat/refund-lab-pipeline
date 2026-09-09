@@ -13,5 +13,8 @@ section "Last records in orders_raw"
 sqlite3 "$DB" -header -column \
 "SELECT id, order_id, customer_id, knowledge_time
 FROM orders_raw ORDER BY id DESC
-LIMIT 4;"
+LIMIT 10;"
 
+section "Handful of records"
+sqlite3 landing.db -header -column "SELECT id, order_id,
+ customer_id, occurred_at, knowledge_time, version  FROM orders_raw;"

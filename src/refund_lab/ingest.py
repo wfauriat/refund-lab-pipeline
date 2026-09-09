@@ -30,7 +30,7 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
     while True:
         for attempt in range(CHAIN_RETRY_LIMIT):
             payload = fetch_page_with_retry(client, entity, cursor,
-                                    as_of, since, until)
+                                    as_of, since, until, limit=10)
             if cursor is None or payload["next_cursor"] is None:
                 break
             this_position = decode_cursor(payload["cursor"])
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     auth_to_API(client)
 
     entity = "orders"
-    as_of = "2027-01-31T00:00:00"
+    as_of = "2026-05-01T00:00:00"
     since = "2026-01-15T00:00:00"
     until = "2026-01-25T00:00:00"
     pulled = run_pull(entity, since, until, as_of,

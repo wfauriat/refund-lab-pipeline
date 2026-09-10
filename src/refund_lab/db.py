@@ -60,4 +60,56 @@ def write_entry(entry: dict, conn: sqlite3.Connection,
                   f"{', '.join(ORDERS_COLS[1:])}) "
                   f"VALUES ({', '.join('?' for _ in ORDERS_COLS[1:])});"),
             tuple(values[col] for col in ORDERS_COLS[1:]))
+    # Does not commit on purpose, complete page does the commit after all rows
     return bool(cur.rowcount)
+
+
+def create_stg_orders(conn: sqlite3.Connection):
+    conn.execute(f"DROP VIEW IF EXISTS stg_orders;")
+    conn.execute(f"CREATE VIEW stg_orders AS "
+                 f"SELECT order_id, customer_id, occurred_at, "
+                 f"channel, payment_method, "
+                 f"shipping_speed, order_total_cents, knowledge_time, "
+                 f"content_hash, CAST(version AS INTEGER) AS version "
+                 f"FROM orders_raw")
+    # Default : DDL does commit on default, DML does not. 
+
+
+def create_orders_current(conn: sqlite3.Connection):
+    # CTE (WITH ranked AS (...)): a named, query-scoped temp result.           
+    # ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...): window function —     
+    # numbers rows within each order_id group without collapsing them,         
+    # so the outer SELECT can filter to rn = 1 (latest version per order).  
+    conn.execute(f"DROP VIEW IF EXISTS orders_current")
+    conn.execute(f"CREATE VIEW orders_current AS "
+                 f"WITH ranked AS ("
+                 f"SELECT *, "
+                 f"ROW_NUMBER() OVER (PARTITION BY order_id "
+                 f"ORDER BY version DESC, knowledge_time DESC) AS rn "
+                 f"FROM stg_orders) "
+                 f"SELECT order_id, customer_id, occurred_at, "
+                 f"channel, payment_method, shipping_speed, "
+                 f"order_total_cents, knowledge_time, content_hash, "
+                 f" version FROM ranked WHERE rn = 1;")
+
+def query_daily_volume(conn: sqlite3.Connection) \
+    -> list[tuple[str, str, int, int]]:
+    QUERY_DAILY_VOLUME = """
+    SELECT strftime('%Y-%m-%d', occurred_at) AS day, channel, 
+    COUNT(*) AS count,
+    SUM(order_total_cents) AS total_cents
+    FROM orders_current
+    GROUP BY day, channel
+    ORDER BY day ASC, channel DESC;
+    """
+    cursor = conn.execute(QUERY_DAILY_VOLUME)
+    result = []
+    for row in cursor.fetchall():
+        date, channel, count, total_cents = row
+        result.append((date, channel, count, total_cents))
+    return result
+
+
+
+
+

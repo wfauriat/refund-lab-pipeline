@@ -90,8 +90,10 @@ if __name__ == "__main__":
 
     entity = "orders"
     as_of = "2026-05-01T00:00:00"
-    since = "2026-01-15T00:00:00"
-    until = "2026-01-25T00:00:00"
+    # since = "2026-01-15T00:00:00"
+    # until = "2026-01-25T00:00:00"
+    since = "2026-01-01T00:00:00"
+    until = "2026-05-01T00:00:00"
     pulled = run_pull(entity, since, until, as_of,
              conn, client)
     logger.info(f"Completed pull : "

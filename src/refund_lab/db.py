@@ -1,11 +1,15 @@
 import datetime
 import sqlite3
 import json
+import logging
 
 from .utils import content_hash
 from .config import LANDING_DB
 from .schema import (LEDGER, LEDGER_COLS, SCHEMA_LEDGER,
                      ORDERS_RAW, ORDERS_COLS, SCHEMA_ORDERS_RAW)
+
+
+logger = logging.getLogger(__name__)
 
 def init_db() -> sqlite3.Connection:
     conn = sqlite3.connect(LANDING_DB)
@@ -34,7 +38,7 @@ def complete_page(conn: sqlite3.Connection,
     conn.commit()
 
 def write_entry(entry: dict, conn: sqlite3.Connection,
-                datepage, cursor, page):
+                datepage, cursor, page) -> bool:
     values = {
         "order_id": entry["order_id"],
         "customer_id": entry["customer_id"],
@@ -52,7 +56,8 @@ def write_entry(entry: dict, conn: sqlite3.Connection,
         "source_cursor": cursor,
         "source_page": page
     }
-    conn.execute((f"INSERT OR IGNORE INTO orders_raw ("
+    cur = conn.execute((f"INSERT OR IGNORE INTO orders_raw ("
                   f"{', '.join(ORDERS_COLS[1:])}) "
                   f"VALUES ({', '.join('?' for _ in ORDERS_COLS[1:])});"),
             tuple(values[col] for col in ORDERS_COLS[1:]))
+    return bool(cur.rowcount)

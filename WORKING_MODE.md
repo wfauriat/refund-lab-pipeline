@@ -27,18 +27,21 @@ confirm or kill it. Technique/tooling/testing questions ("how do I...",
 already prescribes — this addendum just extends "direct on technique" to
 cover implementation and refactoring work too, not only conceptual questions.
 
-**Session state (2026-09-09):** ingestion split into `config` / `client` /
+**Session state (2026-09-10):** ingestion split into `config` / `client` /
 `db` / `schema` / `utils` / `ingest` modules. Cursor decoding
 (`decode_cursor`) and the pr/pv chain reject-and-retry logic are implemented
 in `run_pull` and confirmed working against the live API — including the
 finding that `rows_served`/`last_seen_value` count from the true start of the
 data horizon, not from `since` (so never compare them against `total_count`).
 Unit tests exist for `fetch_page_with_retry` (transport retry),
-`decode_cursor`, and `classify_response` in `tests/test_client.py`.
+`decode_cursor`, `classify_response`, and `run_pull`'s chain-retry logic
+(happy path, retry-and-recover, retry-exhaustion) in `tests/test_client.py`
+— 7/7 passing. `db.py` now has dedup: `orders_raw` has
+`UNIQUE(order_id, version, content_hash)` with `INSERT OR IGNORE`,
+`page_ledger` has `UNIQUE(entity, since, until, as_of_received, page_num)`
+with `INSERT OR REPLACE`. This dedup logic has no tests yet.
 
-**Next up:** tests for `run_pull`'s content/chain-retry logic. Needs
-monkeypatching `fetch_page_with_retry` by its name as imported into
-`refund_lab.ingest` (not `refund_lab.client` — patch where it's looked up),
-scripting multi-page payload sequences via hand-built encoded cursors, and
-covering three cases: happy path, retry-and-recover from one bad page, and
-retry-exhaustion raising `UncompletePull`.
+**Next up:** `tests/test_db.py` covering the dedup behaviour just added —
+see next message for the exact cases. After that: wire up
+`find_resume_point` (written, unwired, commented out in `ingest.py`), and
+extend beyond `orders` to the other entities.

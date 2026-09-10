@@ -15,3 +15,12 @@ htmlcov/
 response.json
 *.jsonl
 !incidents.jsonl
+
+# db / build artifacts
+*.db
+*.duckdb
+
+# dbt
+transform/target/
+transform/logs/
+transform/dbt_packages/

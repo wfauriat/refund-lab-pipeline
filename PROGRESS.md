@@ -1,7 +1,8 @@
 # Progress log — refund-lab-pipeline
 
-Updated 2026-09-11. Status snapshot, not a design doc — see `WORKING_MODE.md`
-for collaboration style and `TUTOR.md` for the exercise spec.
+Updated 2026-09-10 (evening session). Status snapshot, not a design doc — see
+`WORKING_MODE.md` for collaboration style and `TUTOR.md` for the exercise
+spec.
 
 ## Done
 
@@ -71,6 +72,61 @@ for collaboration style and `TUTOR.md` for the exercise spec.
 - `query_daily_volume` (`db.py`): daily order count + revenue by channel
   over `orders_current`, using `strftime('%Y-%m-%d', occurred_at) AS day`.
   Runs clean, returns 346 `(day, channel)` rows.
+- **Interpreted:** `query_weekday_weekend_split` (`db.py`) — weekday avg
+  35.24 orders/day vs weekend avg 26.47/day, ratio 0.751. Matches
+  TUTOR.md's documented baseline ("weekends run at about three quarters")
+  almost exactly, from real landed data. Not an incident — confirms the
+  baseline model is sound, which is itself the point of doing this.
+- `query_orders_as_of(conn, as_of)` (`db.py`): bitemporal reconstruction —
+  same ranked-CTE dedup as `orders_current`, but with `WHERE knowledge_time
+  <= ?` inside the CTE, so a restatement not yet knowable by the cutoff
+  simply isn't in the ranking pool. Can't be a view (SQLite views take no
+  parameters), so it's a parameterized function using `?` binding, same
+  idiom as `write_entry`/`complete_page`. Verified against `ORD-00000325`'s
+  real restatement: `as_of='2026-02-01'` → version 1, `order_total_cents`
+  4931; `as_of='2026-05-01'` → version 2, `order_total_cents` 4469. The
+  restatement changed the actual order total, not just a version counter —
+  a concrete demonstration of the two-timelines idea, not just a syntax
+  exercise.
+
+**dbt + DuckDB — set up as a deliberate side-track, not a replacement**
+- New `transform/` directory: a self-contained dbt project (`dbt-duckdb`
+  added as a `uv` dev dependency of the main project — one shared `.venv`,
+  not a separate environment). `dbt-duckdb` chosen over a SQLite adapter
+  because the latter is a thin, less-maintained community package;
+  DuckDB's `sqlite` extension instead **attaches `landing.db` directly**
+  (`profiles.yml`'s `attach:` block) as a catalog named `landing`, so
+  `orders_raw` is queryable through dbt/DuckDB with no data copied or
+  migrated.
+- Two models, deliberately re-implementing (not depending on) the existing
+  SQLite views: `models/stg_orders.sql` (`{{ source('landing',
+  'orders_raw') }}`, same casts as `create_stg_orders`) and
+  `models/orders_current.sql` (`{{ ref('stg_orders') }}`, same ranked-CTE
+  dedup as `create_orders_current`). `dbt run` materializes both as views
+  **inside `warehouse.duckdb`** — a separate file from `landing.db`.
+  Verified identical results to the hand-rolled versions: `orders_current`
+  count 3931 = distinct order_id, and `ORD-00000325` resolves to version 2.
+  **Important to keep straight:** `orders_current` now exists twice, fully
+  independently — once in `landing.db` (SQLite, from `db.py`), once in
+  `warehouse.duckdb` (DuckDB, from dbt). Same logic, two engines, no
+  relationship between them; nothing in the Python ingestion/query code
+  depends on dbt.
+- `models/schema.yml`: `unique` + `not_null` dbt tests on `orders_current`
+  (`order_id`, `version`, `knowledge_time`) — passing. These formalize the
+  same manual checks (`COUNT(*)` vs `COUNT(DISTINCT order_id)`, spot-check
+  a known row) done by hand for the SQLite views.
+- `transform/dbt_alias.sh` (source it: `source transform/dbt_alias.sh`):
+  `dbtdebug`/`dbtrun`/`dbttest`/`dbtbuild`/`dbtclean` aliases and a
+  `dbtshow "<sql>" [limit]` function. Non-obvious bug this had to work
+  around: dbt's `--project-dir`/`--profiles-dir` control where dbt looks
+  for its own config files, but the `dbt-duckdb` adapter resolves the
+  *data file* paths inside `profiles.yml` (`path:`, `attach:`) relative to
+  the shell's cwd regardless of those flags — running from the wrong
+  directory silently created a second, empty `warehouse.duckdb` instead of
+  erroring. Fixed by wrapping every command in a `(cd "$DBT_DIR" && ...)`
+  subshell rather than relying on the flags alone.
+- `.gitignore` updated: `*.db`/`*.duckdb` and `transform/{target,logs,
+  dbt_packages}/` — build artifacts, not tracked.
 
 ## Todo
 
@@ -88,17 +144,16 @@ for collaboration style and `TUTOR.md` for the exercise spec.
   above whatever the default level is).
 
 **Transformation / SQL — active track**
-1. **Interpret `query_daily_volume`'s output** — the query runs, but nobody
-   has yet looked at the 346 rows against TUTOR.md's baseline claims
-   (weekday ~full, weekend ~three-quarters, autocorrelated shocks). This is
-   the actual point of the exercise, not the SQL mechanics — pick this up
-   first next session. 346 raw rows may be easier read as a further
-   rollup (e.g. weekday-vs-weekend averages) than eyeballed directly.
-2. Bitemporal reconstruction: "what did we believe as of date X", filtering
-   on `knowledge_time` instead of `occurred_at`. Can't be a plain view in
-   SQLite (views take no parameters) — will need a parameterized query.
-3. Cross-channel reconciliation (orders/payments/labels) — needs payments
-   and labels landed first.
+1. Cross-channel reconciliation (orders/payments/labels) — needs payments
+   and labels landed first, so blocked on the parked ingestion work below.
+2. Broader baseline characterization beyond weekday/weekend: annual
+   cycle/Q4 peak, the calendar-predictable outlier days (Black
+   Friday-equivalent, Christmas/New Year), growth trend — current data
+   window may not span enough calendar time to check all of these yet.
+3. Consider porting `query_orders_as_of` (parameterized as-of query) and
+   the weekday/weekend rollup into dbt too, or deciding they stay
+   Python-side since dbt models/tests don't take runtime parameters either
+   — same limitation as the SQLite view approach, unexamined so far.
 
 **Orchestration** — not started. Scheduled, unattended, with monitoring
 that would surface an incident on its own.

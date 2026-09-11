@@ -1,7 +1,7 @@
 import sqlite3
 import json 
 from refund_lab.schema import SCHEMA_LEDGER, SCHEMA_ORDERS_RAW
-from refund_lab.db import write_entry, complete_page
+from refund_lab.db import write_order_entry, complete_page
 from refund_lab.utils import content_hash
 
 def test_write_entry_dedupes_identical_rows():
@@ -17,9 +17,9 @@ def test_write_entry_dedupes_identical_rows():
         "items": json.dumps({"item1": 1, "item2": 2}),
         "version": 1, "knowledge_time": "2023-01-01 00:00:00",
     }
-    write_entry(mock_dict, conn, "2023-01-01 00:00:00",
+    write_order_entry(mock_dict, conn, "2023-01-01 00:00:00",
                  "some_cursor", "some_page")
-    write_entry(mock_dict, conn, "2023-01-01 00:00:00",
+    write_order_entry(mock_dict, conn, "2023-01-01 00:00:00",
                  "some_cursor", "some_page")
     cursor = conn.execute("SELECT * FROM orders_raw")
     rows = cursor.fetchall()
@@ -41,9 +41,9 @@ def test_write_entry_keeps_restated_version():
     mock_dict_v2 = mock_dict_v1.copy()
     mock_dict_v2["version"] = 2
     mock_dict_v2["knowledge_time"] = "2023-01-02 00:00:00"
-    write_entry(mock_dict_v1, conn, "2023-01-01 00:00:00",
+    write_order_entry(mock_dict_v1, conn, "2023-01-01 00:00:00",
                     "some_cursor", "some_page")
-    write_entry(mock_dict_v2, conn, "2023-01-01 00:00:00",
+    write_order_entry(mock_dict_v2, conn, "2023-01-01 00:00:00",
                     "some_cursor", "some_page")
     cursor = conn.execute("SELECT * FROM orders_raw")
     rows = cursor.fetchall()

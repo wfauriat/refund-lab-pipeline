@@ -5,8 +5,9 @@ import logging
 
 from .utils import content_hash
 from .config import LANDING_DB
-from .schema import (LEDGER, LEDGER_COLS, SCHEMA_LEDGER,
-                     ORDERS_RAW, ORDERS_COLS, SCHEMA_ORDERS_RAW)
+from .schema import (LEDGER_COLS, SCHEMA_LEDGER,
+                     ORDERS_COLS, SCHEMA_ORDERS_RAW,
+                     CUSTOMERS_COLS, SCHEMA_CUSTOMERS_RAW)
 
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,11 @@ def init_db() -> sqlite3.Connection:
     # conn.execute("DROP TABLE IF EXISTS orders_raw") # Temp for dev rerun
     conn.executescript(SCHEMA_LEDGER)
     conn.executescript(SCHEMA_ORDERS_RAW)
+    conn.executescript(SCHEMA_CUSTOMERS_RAW)
+    create_stg_orders(conn)
+    create_stg_customers(conn)
+    create_orders_current(conn)
+    create_customers_current(conn)
     conn.commit()
     return conn
 
@@ -37,31 +43,44 @@ def complete_page(conn: sqlite3.Connection,
             cursor, payload["next_cursor"]))
     conn.commit()
 
-def write_entry(entry: dict, conn: sqlite3.Connection,
-                datepage, cursor, page) -> bool:
-    values = {
-        "order_id": entry["order_id"],
-        "customer_id": entry["customer_id"],
-        "occurred_at": entry["occurred_at"],
-        "channel": entry["channel"],
-        "payment_method": entry["payment_method"],
-        "shipping_speed": entry["shipping_speed"],
-        "order_total_cents": entry["order_total_cents"],
-        "items": json.dumps(entry["items"]),
-        "version": entry["version"],
-        "knowledge_time": entry["knowledge_time"],
-        "content_hash": content_hash({k: v for k, v in entry.items() if
-                                       k != "knowledge_time"}),
-        "received_at" : datepage,
-        "source_cursor": cursor,
-        "source_page": page
-    }
-    cur = conn.execute((f"INSERT OR IGNORE INTO orders_raw ("
-                  f"{', '.join(ORDERS_COLS[1:])}) "
-                  f"VALUES ({', '.join('?' for _ in ORDERS_COLS[1:])});"),
-            tuple(values[col] for col in ORDERS_COLS[1:]))
-    # Does not commit on purpose, complete page does the commit after all rows
+
+LANDING_META = {"id", "received_at", "source_cursor", "source_page"}
+
+def write_landing_entry(entry: dict, conn: sqlite3.Connection,
+                         table: str, cols: tuple[str, ...],
+                         datepage, cursor, page,
+                         json_fields: frozenset[str] = frozenset()) -> bool:
+    values = {}
+    for col in cols:
+        if col in ("content_hash", *LANDING_META):
+            continue
+        values[col] = json.dumps(entry[col]) if col in json_fields \
+                      else entry[col]
+
+    values["content_hash"] = content_hash(
+        {k: v for k, v in entry.items() if k != "knowledge_time"})
+    values["received_at"] = datepage
+    values["source_cursor"] = cursor
+    values["source_page"] = page
+
+    cur = conn.execute(
+        (f"INSERT OR IGNORE INTO {table} ("
+         f"{', '.join(cols[1:])}) "
+         f"VALUES ({', '.join('?' for _ in cols[1:])});"),
+        tuple(values[col] for col in cols[1:])
+    )
     return bool(cur.rowcount)
+
+def write_order_entry(entry, conn, datepage, cursor, page):
+    return write_landing_entry(entry, conn, "orders_raw", ORDERS_COLS,
+                                datepage, cursor, page,
+                                json_fields=frozenset({"items"}))
+
+def write_customer_entry(entry, conn, datepage, cursor, page):
+    return write_landing_entry(entry, conn, "customers_raw", CUSTOMERS_COLS,
+                                datepage, cursor, page)
+
+write_entry={"orders": write_order_entry, "customers": write_customer_entry}
 
 
 def create_stg_orders(conn: sqlite3.Connection):
@@ -92,65 +111,25 @@ def create_orders_current(conn: sqlite3.Connection):
                  f"order_total_cents, knowledge_time, content_hash, "
                  f" version FROM ranked WHERE rn = 1;")
 
-def query_daily_volume(conn: sqlite3.Connection) \
-    -> list[tuple[str, str, int, int]]:
-    QUERY_DAILY_VOLUME = """
-    SELECT strftime('%Y-%m-%d', occurred_at) AS day, channel, 
-    COUNT(*) AS count,
-    SUM(order_total_cents) AS total_cents
-    FROM orders_current
-    GROUP BY day, channel
-    ORDER BY day ASC, channel DESC;
-    """
-    cursor = conn.execute(QUERY_DAILY_VOLUME)
-    result = []
-    for row in cursor.fetchall():
-        date, channel, count, total_cents = row
-        result.append((date, channel, count, total_cents))
-    return result
+
+def create_stg_customers(conn: sqlite3.Connection):
+    conn.execute(f"DROP VIEW IF EXISTS stg_customers;")
+    conn.execute(f"CREATE VIEW stg_customers AS "
+                 f"SELECT customer_id, segment, country, city, "
+                 f"signup_date, CAST(is_active AS INTEGER) AS is_active, "
+                 f"lifetime_value_cents, "
+                 f"valid_from, valid_to, knowledge_time, "
+                 f"content_hash, CAST(version AS INTEGER) AS version "
+                 f"FROM customers_raw")
 
 
-def query_weekday_weekend_split(conn: sqlite3.Connection) -> \
-    list[tuple[str, int, int, float]]:
-    QUERY_WEEKDAY_WEEKEND_SPLIT = """
-    WITH per_dow AS (
-        SELECT strftime('%w', occurred_at) AS dow, 
-            COUNT(*) AS n,
-            COUNT(DISTINCT strftime('%Y-%m-%d', occurred_at)) AS n_days
-        FROM orders_current GROUP BY dow )
-    SELECT CASE WHEN dow IN ('0', '6') THEN 'weekend' 
-        ELSE 'weekday' END AS bucket,
-        SUM(n) AS total_orders,
-        SUM(n_days) AS total_days,
-        ROUND(SUM(n) * 1.0 / SUM(n_days), 2) AS avg_orders_per_day
-    FROM per_dow GROUP BY bucket;    
-    """
-    cursor = conn.execute(QUERY_WEEKDAY_WEEKEND_SPLIT)
-    result = []
-    for row in cursor.fetchall():
-        bucket, total_orders, total_days, avg_orders_per_day = row
-        result.append((bucket, total_orders,
-                       total_days, avg_orders_per_day))
-    return result
-
-def query_orders_as_of(conn: sqlite3.Connection, as_of: str) -> list:
-    QUERY_ORDERS_AS_OF = """
-    WITH ranked AS (
-        SELECT *,
-                ROW_NUMBER() OVER (
-                PARTITION BY order_id ORDER BY version DESC,
-                knowledge_time DESC) AS rn
-        FROM stg_orders
-        WHERE knowledge_time <= ?
-    )
-    SELECT order_id, customer_id, occurred_at, 
-           channel, payment_method, shipping_speed, 
-           order_total_cents, knowledge_time, content_hash, 
-           version FROM ranked 
-    WHERE rn = 1
-    """
-    cursor = conn.execute(QUERY_ORDERS_AS_OF, (as_of,))
-    result = []
-    for row in cursor.fetchall():
-        result.append(row)
-    return result
+def create_customers_current(conn: sqlite3.Connection):
+    conn.execute(f"DROP VIEW IF EXISTS customers_current")
+    conn.execute(f"CREATE VIEW customers_current AS "
+                 f"WITH ranked AS ("
+                 f"SELECT *, "
+                 f"ROW_NUMBER() OVER (PARTITION BY customer_id "
+                 f"ORDER BY version DESC, knowledge_time DESC) AS rn "
+                 f"FROM stg_customers "
+                 f"WHERE valid_to IS NULL) "
+                 f"SELECT * FROM ranked WHERE rn = 1;")

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 CHAIN_RETRY_LIMIT = 3
 
+
 class UncompletePull(Exception):
     """ Pull could not complete all the way through
     """
@@ -21,7 +22,7 @@ class UncompletePull(Exception):
 def run_pull(entity: str, since: str, until: str, as_of: str,
              conn: sqlite3.Connection, client: httpx.Client) -> dict:
     page = 1
-    orders = []
+    table = []
     total_rows = 0
     cursor = None
     this_pull = {
@@ -29,11 +30,11 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
         "since": since,
         "until": until,
         "as_of": as_of,
-        "orders": [],
+        "table": [],
         "total_rows": 0
     }
     while True:
-        for attempt in range(CHAIN_RETRY_LIMIT):
+        for _ in range(CHAIN_RETRY_LIMIT):
             payload = fetch_page_with_retry(client, entity, cursor,
                                     as_of, since, until, limit=10)
             if cursor is None or payload["next_cursor"] is None:
@@ -54,11 +55,11 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
         timestamp = datetime.datetime.now().isoformat()
 
         for row in data: 
-            added = write_entry(row, conn, timestamp, cursor, page)
+            added = write_entry[entity](row, conn, timestamp, cursor, page)
             total_rows += added
         complete_page(conn, payload, entity,
                         cursor, page, as_of, since, until)
-        orders.extend(payload["data"])            
+        table.extend(payload["data"])            
         cursor = payload["next_cursor"]
         if page == 1:
             as_of = payload["as_of"]
@@ -66,9 +67,9 @@ def run_pull(entity: str, since: str, until: str, as_of: str,
         page += 1
         if cursor is None:
             break
-    this_pull["orders"] = orders
+    this_pull["table"] = table
     this_pull["total_rows"] = total_rows
-    logger.info(f"{total_rows} new orders added to orders_raw"
+    logger.info(f"{total_rows} new {entity} added to {entity}_raw"
                 f" at {LANDING_DB}")
     return this_pull
 
@@ -89,11 +90,13 @@ if __name__ == "__main__":
     auth_to_API(client)
 
     entity = "orders"
+    # entity = "customers"
     as_of = "2026-05-01T00:00:00"
+    since = "2020-01-01T00:00:00"
+    until = "2026-05-01T00:00:00"
     # since = "2026-01-15T00:00:00"
     # until = "2026-01-25T00:00:00"
-    since = "2026-01-01T00:00:00"
-    until = "2026-05-01T00:00:00"
+ 
     pulled = run_pull(entity, since, until, as_of,
              conn, client)
     logger.info(f"Completed pull : "
@@ -102,20 +105,3 @@ if __name__ == "__main__":
     # print(pulled["orders"][0])
 
 
-
-
-## NOT DONE YET
-# def find_resume_point(conn, entity, since, until):
-#     row = conn.execute("""
-#         SELECT page_num, cursor, next_cursor, as_of_received
-#         FROM page_ledger
-#         WHERE entity = ? AND since = ? AND until = ?
-#         ORDER BY as_of_received DESC, page_num DESC
-#         LIMIT 1;
-#     """, (entity, since, until)).fetchone()
-#     if row is None:
-#         return (False, None, 0, None)
-#     if row["next_cursor"] == None:
-#         return (True, None, row["page_num"], row["as_of_received"])
-#     else:
-#         return (False, row["next_cursor"], row["page_num"], row["as_of_received"])

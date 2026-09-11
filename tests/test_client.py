@@ -84,7 +84,7 @@ def test_run_pull_recovers_from_one_bad_chain_link(monkeypatch):
     this_pull = run_pull("orders","", "", "",
                           conn, client)
     assert mock_fetch.call_count == 3
-    assert len(this_pull["orders"]) == 2
+    assert len(this_pull["table"]) == 2
 
 
 

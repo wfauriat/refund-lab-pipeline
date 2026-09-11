@@ -27,3 +27,27 @@ SCHEMA_ORDERS_RAW = "CREATE TABLE IF NOT EXISTS orders_raw (\n  " + \
     ",\n " + "UNIQUE (order_id, version, content_hash));"
 
 ORDERS_COLS = tuple(name for name, _ in ORDERS_RAW)
+
+
+CUSTOMERS_RAW = (("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+                 ("customer_id", "TEXT NOT NULL"),
+                 ("segment", "TEXT"),
+                 ("country", "TEXT"),
+                 ("city", "TEXT"),
+                 ("signup_date", "TEXT"),
+                 ("is_active", "INT"),                 
+                 ("lifetime_value_cents", "INT"),
+                 ("valid_from", "TEXT"),
+                 ("valid_to", "TEXT"),
+                 ("knowledge_time", "TEXT"),
+                 ("version", "TEXT"),
+                 ("content_hash", "TEXT"),
+                 ("received_at", "TEXT"),
+                 ("source_cursor", "TEXT"),
+                 ("source_page", "TEXT"))
+
+SCHEMA_CUSTOMERS_RAW = "CREATE TABLE IF NOT EXISTS customers_raw (\n  " + \
+    ",\n  ".join(f"{name} {decl}" for name, decl in CUSTOMERS_RAW) + \
+    ",\n " + "UNIQUE (customer_id, version, content_hash));"
+
+CUSTOMERS_COLS = tuple(name for name, _ in CUSTOMERS_RAW)
